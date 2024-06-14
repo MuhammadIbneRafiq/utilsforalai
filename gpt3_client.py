@@ -1,8 +1,8 @@
-# ignore this python file, this will be later converted into the utils.js file
 from langchain_groq import ChatGroq
 import os
 from datetime import datetime
 import sentence_transformers
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders.pdf import PyPDFLoader
 from langchain_community.document_loaders.merge import MergedDataLoader
 from langchain.prompts import PromptTemplate
@@ -11,61 +11,68 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.output_parsers import JsonOutputParser
 from typing import Union, List, Tuple, Dict
 from langchain_chroma import Chroma
+from pdfminer.high_level import extract_text
+from langchain.schema import Document
 
 GROQ_LLM = ChatGroq(
-            api_key=os.getenv('GROQ_API_KEY'),
-            model="llama3-70b-8192"
-        ) 
+    api_key=os.getenv('GROQ_API_KEY'),
+    model="llama3-70b-8192"
+) 
+
+file_path = './invoice_from_ocr.pdf'
 
 def rag_chain_node():
-    loader_csv = PyPDFLoader(file_path='freelancers_data.pdf')
-    loader_all = MergedDataLoader(loaders=[loader_csv]) 
-    docs_all = loader_all.load()
-    from langchain.text_splitter import RecursiveCharacterTextSplitter
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=200, chunk_overlap=30)
+    # Try loading PDF with PyPDFLoader
+    # print("Loading PDF with PyPDFLoader...")
+    loader_csv = PyPDFLoader(file_path=file_path)
+    
+    docs_all = loader_csv.load()
+    # print(f"Loaded documents: {docs_all}")
+
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=300)
+    
     texts = text_splitter.split_documents(docs_all)
+    # print(f"Split texts: {texts}")
+
     from langchain_community.embeddings import HuggingFaceBgeEmbeddings
     model_name = "BAAI/bge-base-en"
-    encode_kwargs = {'normalize_embeddings': True} # set True to compute cosine similarity
+    encode_kwargs = {'normalize_embeddings': True}  # set True to compute cosine similarity
     bge_embeddings = HuggingFaceBgeEmbeddings(
         model_name=model_name,
         encode_kwargs=encode_kwargs
     )
-    # from langchain_chroma import Chroma
+    # print(f"Using embeddings model: {model_name}")
+
     persist_directory = 'db'
-    ## Heres the embeddings
     embedding = bge_embeddings
+    # print("Creating vector database from documents...")
+
     vectordb = Chroma.from_documents(documents=texts, embedding=embedding, persist_directory=persist_directory)
     retriever = vectordb.as_retriever(search_kwargs={"k": 5})
 
     rag_prompt = PromptTemplate(
-        template="""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-        You are an assistant for question-answering tasks. 
-        Use the following pieces of retrieved context to answer the question. 
-        If you don't know the answer, just say that you don't know. 
-        Use 2 sentences maximum and keep the answer concise.\n
-        <|eot_id|><|start_header_id|>user<|end_header_id|>
+        template="""system
+        You are an accounting assistant for looking through invoices in Dutch. 
+        Use the following pieces of retrieved context from invoices in pdf format and sort them in category. 
+        These texts from the pdf is read from an OCR so some of the words may not make sense, so trust the numbers.
+        Use the context to derive your answer.
+        If you don't know the answer, just say that you don't know but first try out some stuff.
+        user
         QUESTION: {question} \n
         CONTEXT: {context} \n
         Answer:
-        <|eot_id|>
-        <|start_header_id|>assistant<|end_header_id|>
+        
+        assistant
         """,
-        input_variables=["question","context"],
+        input_variables=["question", "context"],
     )
     
     rag_prompt_chain = rag_prompt | GROQ_LLM | StrOutputParser()
-    QUESTION = """What can I do with video editing freelancers?"""
+    QUESTION = """What was all the orders in the invoice AND the total??"""
     CONTEXT = retriever.invoke(QUESTION)
-    result = rag_prompt_chain.invoke({"question": QUESTION, "context":CONTEXT})
-    
-    rag_chain = (
-    {"context": retriever , "question": RunnablePassthrough()}
-    | rag_prompt
-    | GROQ_LLM
-    | StrOutputParser()
-    )
-    return rag_chain.invoke("I am looking for freelancers for video editing. how much budget options are available?")
+    print(f"Retrieved context: {CONTEXT}")
 
+    result = rag_prompt_chain.invoke({"question": QUESTION, "context": CONTEXT})
+    print('ANSWER', result)
 
-print(rag_chain_node())
+rag_chain_node()
