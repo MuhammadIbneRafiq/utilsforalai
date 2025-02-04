@@ -14,6 +14,8 @@ from langchain_chroma import Chroma
 from pdfminer.high_level import extract_text
 from langchain.schema import Document
 
+# make it take in an invoice of the pdf form from dutch lang and structure it accordingly
+
 GROQ_LLM = ChatGroq(
     api_key=os.getenv('GROQ_API_KEY'),
     model="llama3-70b-8192"
