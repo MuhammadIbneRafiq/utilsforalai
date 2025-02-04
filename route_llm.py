@@ -36,7 +36,7 @@ def get_embedding(text):
 
 def route_query(query: str) -> tuple[str, str, str]:
     """Route query using a simplified matrix factorization approach."""
-    # Generate embeddings for the query and models
+    # Generate embeddings for the query
     query_embedding = get_embedding(query)
     
     # Calculate similarity scores with local models if needed
@@ -52,11 +52,11 @@ def route_query(query: str) -> tuple[str, str, str]:
     # Determine which model to use based on similarity
     if similarities["strong"] > similarities["weak"]:
         model_used = "llama3-7b-2048"
-        response = LLAMA_7B.invoke({"messages": [{"role": "user", "content": query}]})
+        response = LLAMA_7B.invoke([{"role": "user", "content": query}])
         reasoning = "Complex query requiring larger model"
     else:
         model_used = "llama3-3b-2048"
-        response = LLAMA_SMALL.invoke({"messages": [{"role": "user", "content": query}]})
+        response = LLAMA_SMALL.invoke([{"role": "user", "content": query}])
         reasoning = "Straightforward query handled by smaller model"
     
     return response, model_used, reasoning
