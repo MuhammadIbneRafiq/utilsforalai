@@ -1,57 +1,65 @@
 import os
-from langchain_groq import ChatGroq
-from routellm.controller import Controller
-from typing import Tuple
+from huggingface_hub import snapshot_download
 
-# Configure Groq API keys
-os.environ["GROQ_API_KEY"] = "your-groq-api-key"
+# Download the desired models
+# snapshot_download(repo_id="bert-base-uncased")  # Example for BERT
+# snapshot_download(repo_id="mistral/Mixtral-8x7B-Instruct-v0.1")  # Example for Mistral
+
+#import os
+from langchain_groq import ChatGroq
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
 
 # Initialize Groq models
 LLAMA_7B = ChatGroq(
     api_key=os.getenv('GROQ_API_KEY'),
-    model="llama3-7b-2048"
+    model="llama3-70b-8192"
 )
 
 LLAMA_SMALL = ChatGroq(
     api_key=os.getenv('GROQ_API_KEY'),
-    model="llama3-3b-2048"  # Assuming a smaller model is available
+    model="llama3-8b-8192"
 )
 
-# Custom wrapper to use Groq models with RouteLLM's logic
-class GroqWrapper:
-    def __init__(self, model):
-        self.model = model
+# Load local models from Hugging Face
+bert_model = AutoModelForCausalLM.from_pretrained("bert-base-uncased")
+bert_tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
-    def generate(self, query):
-        return self.model(query)
+# Initialize Sentence Transformer for embeddings
+embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 
-# Initialize RouteLLM controller with custom wrappers
-client = Controller(
-    routers=["mf"],  # Matrix factorization router
-    strong_model=GroqWrapper(LLAMA_7B),
-    weak_model=GroqWrapper(LLAMA_SMALL),
-)
+def get_embedding(text):
+    return embedding_model.encode(text)
 
-def route_query(query: str) -> Tuple[str, str, str]:
-    """Route query using RouteLLM's decision engine"""
-    # Use RouteLLM to decide which model to use
-    response = client.chat.completions.create(
-        messages=[{"role": "user", "content": query}]
-    )
+def route_query(query: str) -> tuple[str, str, str]:
+    """Route query using a simplified matrix factorization approach."""
+    # Generate embeddings for the query and models
+    query_embedding = get_embedding(query)
     
-    # Determine which model was used
-    if response.model == "strong":
+    # Calculate similarity scores with local models if needed
+    strong_embedding = get_embedding("This is a strong model prompt.")
+    weak_embedding = get_embedding("This is a weak model prompt.")
+
+    # Calculate similarity scores
+    similarities = {
+        "strong": cosine_similarity([query_embedding], [strong_embedding])[0][0],
+        "weak": cosine_similarity([query_embedding], [weak_embedding])[0][0]
+    }
+    
+    # Determine which model to use based on similarity
+    if similarities["strong"] > similarities["weak"]:
         model_used = "llama3-7b-2048"
+        response = LLAMA_7B.invoke({"messages": [{"role": "user", "content": query}]})
+        reasoning = "Complex query requiring larger model"
     else:
         model_used = "llama3-3b-2048"
+        response = LLAMA_SMALL.invoke({"messages": [{"role": "user", "content": query}]})
+        reasoning = "Straightforward query handled by smaller model"
     
-    # Extract response and reasoning
-    response_text = response.choices[0].message.content
-    reasoning = ("Complex query requiring larger model" 
-                 if model_used == "llama3-7b-2048" 
-                 else "Straightforward query handled by smaller model")
-    
-    return response_text, model_used, reasoning
+    return response, model_used, reasoning
 
 if __name__ == "__main__":
     test_queries = [
